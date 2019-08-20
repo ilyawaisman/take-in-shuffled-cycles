@@ -25,7 +25,7 @@ gets the name `StraightforwardShuffledCopies`.
 ### Shuffle only while you need (into sequence)
 
 Idea of optimization is that for the last section one can stop shuffle algorithm when it produced enough elements. This optimization make turn out to be substantial if `n << list.size`.
-Also when reimplementing `shuffle` in own code one can reuse intermediate collection.
+Also when reimplementing `shuffle` in own code one can reuse intermediate collection (which turned out to be a bad idea).
 The flow of this approach reminds `sequence` generation.
 
 Omitting some details we got something like this:
@@ -37,7 +37,7 @@ sequence {
             val j = random.nextInt(list.size - i) + i
             yield(section[j])
             section[j] = section[i]
-            // we don't need to actually set `section[i]` elements since it will not be used  
+            // we don't need to actually set `section[i]` element since it will not be used  
         }
     }
 }.take(n)
@@ -49,17 +49,17 @@ This implementations is called `ViaSequence`.
 Unfortunately `sequence` generation involves some overhead which is (as shown below) much bigger than the economy from optimizations, at least for single-threaded use.
 So our next step is to get rid of `sequence` mechanisms rewriting the algorithm in an old-fashioned style, like this:
 ```kotlin
-var left = n
-while (left > 0) {
-    section.reset()
-    val sectionSize = min(left, list.size)
-    left -= list.size
+val fullSectionsNum = n / list.size
+repeat(fullSectionsNum) {
+    result.addAll(list.shuffled(random))
+}
 
-    for (i in 0 until sectionSize) {
-        val j = random.nextInt(list.size - i) + i
-        result.add(section[j])
-        section[j] = section[i]
-    }
+val incompleteSectionSize = n - fullSectionsNum * list.size
+val section = list.toMutableList()
+for (i in 0 until incompleteSectionSize) {
+    val j = random.nextInt(list.size - i) + i
+    result.add(section[j])
+    section[j] = section[i]
 }
 ```  
 This implementation is called `OptimizedShuffledCopies`.
@@ -76,9 +76,9 @@ Below used terms `seq` for _sequential_ i.e. single-threaded and `par` for _para
 
 Technical details.
 Start each benchmark with enough (`0x10000`) JIT-warmup runs.
-Don't actually use the results, but it seems optimizer doesn't punish us for that.
+The results of the actual runs are not used, but optimizer doesn't punish us for that.
 
-CPU used in actual benchmarking is i7-3770 @ 3.40 GHz, OS is Win 10.
+CPU used in actual benchmarking is i7-3770 @ 3.40 GHz (4 actual cores), OS is Win 10.
 
 ## Findings
 
@@ -87,95 +87,107 @@ Even for its best case with `take cycles < 1` (where optimization actually works
 And unsurprisingly the wort case is for integer `take cycles`.
 Blame `sequence` generation overhead.
 
-2. In the same conditions `OptimizedShuffledCopies` is noticeably better than `StraightforwardShuffledCopies` also with typical factor aroun `1.5`.
-In one case numbers are worse for optimized version (with `take cycles = 1`) but it may be just a deviation since all results are small there and the difference is not big.
+2. In the same conditions `OptimizedShuffledCopies` is noticeably better than `StraightforwardShuffledCopies` also with typical factor around `1.5`.
 Totally the optimization seems to be a worth investment (if one is actually needed in your profile).
+
+3. For `OptimizedShuffledCopies` it turned out that for complete segments usage of `addAll(list.shuffled())` is a little cheaper than reuse of intermediate collection and resetting it.
+I think that is because in the former case `System.arraycopy` is used.
+
+4. Everyone benefits from parallelism, but `StraightforwardShuffledCopies` does worse than others, so in a couple of tests is loses to `ViaSequence`.
+I don't have an explanation for that.
+What is even more interesting, if `Iterable<T>.shuffled(Random)` is replaced with `Iterable<T>.shuffled()` this implementation becomes _slower_ in multi-threaded mode than in single-thread (which remains the same).
+The reason for it is that in latter case `java.util.Random` is used ultimately.
+And although it is thread-safe it may become quite inefficient if intensively used from several threads simultaneously.
+Shuffle scenario is one of the best examples of such situation.
+
+**Long story short** optimized version is always faster than straightforward one typically around `1.5` times.
+But one need to write it in old-fashioned style since `sequence` generation overhead eats all of the advantage (and even more).
 
 ## Raw benchmark log  
 
 ```
 Benchmark[mode: seq, runs: 4096, list size: 256, take cycles: 3.5]
-35430 nanos -- StraightforwardShuffledCopies
-45446 nanos -- ViaSequence
-15465 nanos -- OptimizedShuffledCopies
+21188 nanos -- StraightforwardShuffledCopies
+29714 nanos -- ViaSequence
+8809 nanos -- OptimizedShuffledCopies
 ================================================================
 
 Benchmark[mode: seq, runs: 4096, list size: 64, take cycles: 3.5]
-5937 nanos -- StraightforwardShuffledCopies
-7817 nanos -- ViaSequence
-3676 nanos -- OptimizedShuffledCopies
+4346 nanos -- StraightforwardShuffledCopies
+7230 nanos -- ViaSequence
+2111 nanos -- OptimizedShuffledCopies
 ================================================================
 
 Benchmark[mode: seq, runs: 4096, list size: 1024, take cycles: 3.5]
-81496 nanos -- StraightforwardShuffledCopies
-122786 nanos -- ViaSequence
-56086 nanos -- OptimizedShuffledCopies
+62011 nanos -- StraightforwardShuffledCopies
+124952 nanos -- ViaSequence
+35701 nanos -- OptimizedShuffledCopies
 ================================================================
 
 Benchmark[mode: seq, runs: 4096, list size: 256, take cycles: 0.5]
-4285 nanos -- StraightforwardShuffledCopies
-4457 nanos -- ViaSequence
-2501 nanos -- OptimizedShuffledCopies
+3180 nanos -- StraightforwardShuffledCopies
+4164 nanos -- ViaSequence
+1837 nanos -- OptimizedShuffledCopies
 ================================================================
 
 Benchmark[mode: seq, runs: 4096, list size: 256, take cycles: 9.5]
-51006 nanos -- StraightforwardShuffledCopies
-106821 nanos -- ViaSequence
-34367 nanos -- OptimizedShuffledCopies
+38166 nanos -- StraightforwardShuffledCopies
+82904 nanos -- ViaSequence
+23844 nanos -- OptimizedShuffledCopies
 ================================================================
 
 Benchmark[mode: seq, runs: 4096, list size: 256, take cycles: 1.0]
-3573 nanos -- StraightforwardShuffledCopies
-8893 nanos -- ViaSequence
-4004 nanos -- OptimizedShuffledCopies
-================================================================
-
-Benchmark[mode: seq, runs: 4096, list size: 256, take cycles: 5.0]
-20480 nanos -- StraightforwardShuffledCopies
-64042 nanos -- ViaSequence
-17930 nanos -- OptimizedShuffledCopies
-================================================================
-
-Benchmark[mode: par, runs: 4096, list size: 256, take cycles: 3.5]
-29946 nanos -- StraightforwardShuffledCopies
-33850 nanos -- ViaSequence
-13766 nanos -- OptimizedShuffledCopies
-================================================================
-
-Benchmark[mode: par, runs: 4096, list size: 64, take cycles: 3.5]
-5540 nanos -- StraightforwardShuffledCopies
-8477 nanos -- ViaSequence
-3748 nanos -- OptimizedShuffledCopies
-================================================================
-
-Benchmark[mode: par, runs: 4096, list size: 1024, take cycles: 3.5]
-83086 nanos -- StraightforwardShuffledCopies
-144739 nanos -- ViaSequence
-56382 nanos -- OptimizedShuffledCopies
-================================================================
-
-Benchmark[mode: par, runs: 4096, list size: 256, take cycles: 0.5]
-7567 nanos -- StraightforwardShuffledCopies
-6241 nanos -- ViaSequence
+2414 nanos -- StraightforwardShuffledCopies
+8202 nanos -- ViaSequence
 2372 nanos -- OptimizedShuffledCopies
 ================================================================
 
+Benchmark[mode: seq, runs: 4096, list size: 256, take cycles: 5.0]
+13789 nanos -- StraightforwardShuffledCopies
+43085 nanos -- ViaSequence
+12100 nanos -- OptimizedShuffledCopies
+================================================================
+
+Benchmark[mode: par, runs: 4096, list size: 256, take cycles: 3.5]
+7601 nanos -- StraightforwardShuffledCopies
+8763 nanos -- ViaSequence
+3397 nanos -- OptimizedShuffledCopies
+================================================================
+
+Benchmark[mode: par, runs: 4096, list size: 64, take cycles: 3.5]
+1892 nanos -- StraightforwardShuffledCopies
+2686 nanos -- ViaSequence
+803 nanos -- OptimizedShuffledCopies
+================================================================
+
+Benchmark[mode: par, runs: 4096, list size: 1024, take cycles: 3.5]
+19724 nanos -- StraightforwardShuffledCopies
+30796 nanos -- ViaSequence
+10372 nanos -- OptimizedShuffledCopies
+================================================================
+
+Benchmark[mode: par, runs: 4096, list size: 256, take cycles: 0.5]
+1186 nanos -- StraightforwardShuffledCopies
+1772 nanos -- ViaSequence
+657 nanos -- OptimizedShuffledCopies
+================================================================
+
 Benchmark[mode: par, runs: 4096, list size: 256, take cycles: 9.5]
-56033 nanos -- StraightforwardShuffledCopies
-86907 nanos -- ViaSequence
-34225 nanos -- OptimizedShuffledCopies
+10932 nanos -- StraightforwardShuffledCopies
+23662 nanos -- ViaSequence
+5656 nanos -- OptimizedShuffledCopies
 ================================================================
 
 Benchmark[mode: par, runs: 4096, list size: 256, take cycles: 1.0]
-4519 nanos -- StraightforwardShuffledCopies
-8801 nanos -- ViaSequence
-3659 nanos -- OptimizedShuffledCopies
+796 nanos -- StraightforwardShuffledCopies
+2437 nanos -- ViaSequence
+1042 nanos -- OptimizedShuffledCopies
 ================================================================
 
 Benchmark[mode: par, runs: 4096, list size: 256, take cycles: 5.0]
-19743 nanos -- StraightforwardShuffledCopies
-49570 nanos -- ViaSequence
-17962 nanos -- OptimizedShuffledCopies
+4218 nanos -- StraightforwardShuffledCopies
+10963 nanos -- ViaSequence
+3865 nanos -- OptimizedShuffledCopies
 ================================================================
 
 ```

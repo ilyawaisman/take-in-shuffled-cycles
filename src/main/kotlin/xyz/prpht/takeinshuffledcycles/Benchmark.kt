@@ -91,6 +91,3 @@ class Benchmark(
     fun withTakeCycles(takeCycles: Float) = Benchmark(testRuns, listSize, takeCycles, isPar)
     fun withParallel(parallel: Boolean) = Benchmark(testRuns, listSize, takeCycles, parallel)
 }
-
-
-private data class Bean(val id: Int)

@@ -1,28 +1,23 @@
 package xyz.prpht.takeinshuffledcycles
 
-import kotlin.math.min
 import kotlin.random.Random
 
 object OptimizedShuffledCopies : Taker {
     override fun <T> takeInShuffledCycles(random: Random, list: List<T>, n: Int): List<T> {
         val result = ArrayList<T>(n)
-        val section = list.toMutableList()
 
-        var left = n
-        while (left > 0) {
-            val sectionSize = min(left, list.size)
-            left -= list.size
+        val fullSectionsNum = n / list.size
+        repeat(fullSectionsNum) {
+            result.addAll(list.shuffled(random))
+        }
 
-            for (i in 0 until sectionSize) {
+        val incompleteSectionSize = n - fullSectionsNum * list.size
+        if (incompleteSectionSize > 0) {
+            val section = list.toMutableList()
+            for (i in 0 until incompleteSectionSize) {
                 val j = random.nextInt(list.size - i) + i
                 result.add(section[j])
                 section[j] = section[i]
-            }
-
-            if (left > 0) {
-                list.indices.forEach { i ->
-                    section[i] = list[i]
-                }
             }
         }
         return result
